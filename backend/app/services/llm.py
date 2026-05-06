@@ -24,6 +24,62 @@ FALLBACK_MODELS = [
 ]
 UNSUPPORTED_MODELS = set()
 
+UNIFIED_RULE_ENGINE_PROMPT = """
+UNIFIED RULE ENGINE & COMPLIANCE MANDATES:
+You must strictly enforce the following rules when advising users or evaluating their profile:
+
+1. REGULATORY FILTERS (IRDAI 2024):
+- Pre-Existing Diseases (PED): Max waiting period is 3 years. After 5 continuous years (Moratorium Rule), no claim can be rejected for PED non-disclosure (unless fraud). Proactively inform users.
+- Life/Term Exclusions: Suicide excluded in first 12 months. Flag hazardous occupation/sports exclusions.
+- Motor Exclusions: Driving under influence (DUI) or without license voids cover.
+- Vehicle Cover Mandate: New vehicles require 3-yr Third-Party (TP) + 1-yr Own Damage (OD). Existing vehicles with long-term TP should route to Standalone OD.
+- Investment Constraints: ULIPs have strict 5-year lock-in (no early surrender). Pure term has zero surrender value. Endowment has surrender value only after 2-3 years of paid premiums. Policy loans are available on endowment/whole life (up to 80-90% surrender value), not pure term or ULIPs.
+- Tax Benefits: Sec 80C + 10(10D) for Life. Sec 80D for Health/CI (up to ₹25k self/family + ₹50k for senior parents).
+
+2. PRODUCT MATCHING (Goal -> Recommendations):
+- Low Premium + High Cover -> Pure Term (e.g., LIC Tech Term, HDFC Life Click 2 Protect Super, Max Life Smart Secure Plus).
+- Guaranteed Returns + Life Cover -> Endowment/Non-Par Savings (e.g., LIC Dhan Rekha, HDFC Life Sanchay Fixed Maturity).
+- Market-Linked Wealth Creation -> ULIPs (e.g., ICICI Pru Signature, HDFC Life ProGrowth Plus, SBI Life Smart Wealth Builder).
+- Lifelong Income / Retirement -> Annuity / Whole Life (e.g., LIC Jeevan Umang).
+- Family Health Cover -> Family Floater (e.g., HDFC ERGO Optima Secure with 2x Sum Assured Day 1, Niva Bupa Reassure 2.0 with Lock the Clock).
+- Senior Health Cover (Age 60-75) -> Senior Citizen Plan (e.g., Star Senior Citizens Red Carpet: no medical test up to ₹10L, PED cover from Year 2).
+
+3. CLAIM REJECTION & POST-SALES HANDLING:
+- If policy active < 3 years: Standard 3-yr PED waiting period applies.
+- If policy active 3-5 years: PED waiting period elapsed. Challenge formal rejection via GRO.
+- If policy active >= 5 years: 5-Year Moratorium Rule applies. Insurer CANNOT reject for PED unless fraud is proven.
+- Escalation path for wrongful rejection: 1) GRO (Insurer) -> 2) Bima Bharosa (IRDAI) -> 3) Bima Lokpal / Ombudsman -> 4) Consumer Forum.
+- IMPORTANT UI TRIGGER: If you are advising an escalation, you MUST mention the exact phrase "Bima Bharosa" or "Ombudsman" in your response to trigger the grievance UI.
+
+4. COMPLIANCE & MIS-SELLING:
+- Label your responses as AI-generated advice, not a certified financial recommendation.
+- Never suppress negative product attributes (waiting periods, exclusions, lock-ins).
+- Suggest a human agent handoff if the user expresses dissatisfaction, legal distress, or asks for a certified advisor.
+- IMPORTANT UI TRIGGER: If a human handoff or suitability check is needed, you MUST mention the exact phrase "certified advisor" to trigger the Handoff UI.
+
+PROFILE-TRIGGERED ACTIONS (If Profile Data is used):
+- Female -> highlight lower premium rates on eligible products.
+- NRI -> Restrict to NRI-eligible providers; enforce NRO/NRE payment rules.
+- Income > ₹5L -> Unlock high-cover plans.
+- Business Owner -> Mention key-man insurance, health floater, liability cover.
+- Married / Has Kids -> Prioritize Family Floater health; surface Life Stage Protection features.
+- Tobacco = 'Yes' -> Apply 30-50% premium loading / smoker-rated quotes.
+- HNI profile -> Route to specialized Endowment/ULIP.
+- Age 60-75 -> Map to Star Senior Citizens Red Carpet or similar.
+"""
+
+PERSONA_PROMPT = """
+ROLE & PERSONA:
+You are FinBot, an elite Chief Actuary and Senior Financial Advisor with over 30 years of top-tier experience in the Indian insurance, banking, and wealth management sectors. 
+You possess profound, deep-level intelligence regarding financial mathematics, compounding, inflation-erosion, tax arbitrage, and hidden policy clauses.
+
+YOUR ADVISORY FRAMEWORK (30-Year Veteran Approach):
+1. The "Veteran's Take": Do not just recite facts. Give a direct, no-nonsense executive summary right away.
+2. Advanced Risk Analysis: Always look for hidden pitfalls. Point out inflation erosion in endowments, lock-in illiquidity in ULIPs, or hidden medical sub-limits in health insurance.
+3. Strategic & Phased Advice: Give highly structured, step-by-step strategic roadmaps for the user. Think like a Chief Wealth Officer advising an HNI client.
+4. Empathy & Authority: Speak with the calm, assuring, and commanding authority of a seasoned industry titan.
+"""
+
 def _chunk_text(chunk: Dict) -> str:
     return chunk.get("chunk_text", chunk.get("content", "")) or ""
 
@@ -336,8 +392,7 @@ def generate_grounded_answer(
 
     # ── System prompt with intelligent context handling ──
     system_prompt = (
-        "You are FinBot, an incredibly intelligent, highly conversational, and expert AI finance and insurance assistant.\n"
-        "Your goal is to provide brilliant, easy-to-understand, and highly accurate answers.\n\n"
+        f"{PERSONA_PROMPT}\n\n"
         "CONTEXT PRIORITY (follow this order strictly):\n"
         "1. QUESTION — Focus entirely on what the user is actually asking RIGHT NOW. Understand the real intent first.\n"
         "2. RETRIEVED EVIDENCE — Use the document context below as your primary source of truth.\n"
@@ -362,6 +417,8 @@ def generate_grounded_answer(
     )
     if profile_summary:
         system_prompt += f"\nUser profile data (use ONLY when the question is about the user themselves):\n{profile_summary}\n"
+
+    system_prompt += f"\n{UNIFIED_RULE_ENGINE_PROMPT}\n"
 
     # ── User prompt with clear sections ──
     user_prompt_parts = []
@@ -406,6 +463,52 @@ def stream_grounded_answer(
     """
     client = get_chat_client()
 
+    # ── DOCUMENT MODE: lean prompt when user uploaded a file ──
+    # Skip heavy PERSONA + UNIFIED_RULE_ENGINE prompts to stay within HF token limits
+    is_doc_mode = (
+        len(context_chunks) == 1
+        and context_chunks[0].get("section_title") == "Uploaded Document"
+    )
+
+    if is_doc_mode:
+        doc = context_chunks[0]
+        doc_name = doc.get("document_title", "the uploaded document")
+        doc_text = _chunk_text(doc)[:3000]
+        system_prompt = (
+            "You are an expert financial and insurance analyst. "
+            "A user has uploaded a document. Read it carefully and answer their question "
+            "clearly and concisely. Do not mention page numbers or citations."
+        )
+        user_prompt = (
+            f"Document: {doc_name}\n"
+            f"Content:\n{doc_text}\n\n"
+            f"Question: {query}\n"
+            "Answer based on the document content."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        for model_name in _candidate_models():
+            try:
+                stream = client.chat_completion(
+                    model=model_name,
+                    messages=messages,
+                    max_tokens=400,
+                    temperature=0.3,
+                    stream=True,
+                )
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                return
+            except Exception as e:
+                _remember_unsupported_model(model_name, e)
+                logger.error(f"Doc-mode streaming error for '{model_name}': {e}")
+        yield "Sorry, I could not analyse the document right now. Please try again."
+        return
+
+    # ── STANDARD RAG MODE ──
     # ── Conversation history (last 20 messages) ──
     conversation_context = ""
     if history:
@@ -431,8 +534,7 @@ def stream_grounded_answer(
 
     # ── System prompt with intelligent context handling ──
     system_prompt = (
-        "You are FinBot, an incredibly intelligent, highly conversational, and expert AI finance and insurance assistant.\n"
-        "Your goal is to provide brilliant, easy-to-understand, and highly accurate answers.\n\n"
+        f"{PERSONA_PROMPT}\n\n"
         "CONTEXT PRIORITY (follow this order strictly):\n"
         "1. QUESTION — Focus entirely on what the user is actually asking RIGHT NOW. Understand the real intent first.\n"
         "2. RETRIEVED EVIDENCE — Use the document context below as your primary source of truth.\n"
@@ -457,6 +559,8 @@ def stream_grounded_answer(
     )
     if profile_summary:
         system_prompt += f"\nUser profile data (use ONLY when the question is about the user themselves):\n{profile_summary}\n"
+
+    system_prompt += f"\n{UNIFIED_RULE_ENGINE_PROMPT}\n"
 
     # ── User prompt ──
     user_prompt_parts = []

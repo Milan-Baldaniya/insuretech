@@ -178,16 +178,34 @@ export default function ChatPage() {
   }, [isLoading]);
 
   // Send message — streaming via SSE
-  const sendMessage = useCallback(async (text?: string) => {
-    const question = (text || input).trim();
-    if (!question || isLoading || sendLockRef.current) return;
+  const sendMessage = useCallback(async (documentContext?: string, documentName?: string) => {
+    let question = input.trim();
+    if (!question && !documentContext) return;
+    
+    // The string that the LLM will see — formatted to match backend regex parser
+    // Format: [Attached Document: name]\n{full doc text}\n\n{user question}
+    let apiQuestion = question;
+    if (documentContext && documentName) {
+      // documentContext already has "[Attached Document: name]\n{text}\n"
+      // We need format: [Attached Document: name]\n{text}\n\n{question}
+      const docText = documentContext
+        .replace(`[Attached Document: ${documentName}]\n`, "")
+        .trim();
+      apiQuestion = `[Attached Document: ${documentName}]\n${docText}\n\n${question}`.trim();
+    }
+
+    // The string that the user will see in the chat bubble (clean question only — doc shown as card)
+    const displayQuestion = question || "";
+
+    if (isLoading || sendLockRef.current) return;
     sendLockRef.current = true;
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: question,
+      content: displayQuestion,
       timestamp: new Date(),
+      attachedDocumentName: documentName,
     };
     const botMsgId = crypto.randomUUID();
     const botMsg: Message = {
@@ -216,7 +234,7 @@ export default function ChatPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ question, session_id: sessionId }),
+        body: JSON.stringify({ question: apiQuestion, session_id: sessionId }),
       });
 
       if (!res.ok || !res.body) throw new Error("Stream request failed");
@@ -421,8 +439,9 @@ export default function ChatPage() {
             <ChatInput
               value={input}
               onChange={setInput}
-              onSend={() => sendMessage()}
+              onSend={(docContext, docName) => sendMessage(docContext, docName)}
               isLoading={isLoading}
+              getAuthToken={getAuthToken}
             />
           </div>
         </div>

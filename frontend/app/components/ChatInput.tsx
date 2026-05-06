@@ -1,16 +1,22 @@
 "use client";
 
-import { FormEvent, memo, useEffect, useRef } from "react";
+import { FormEvent, memo, useEffect, useRef, useState } from "react";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface ChatInputProps {
   value: string;
   onChange: (val: string) => void;
-  onSend: () => void;
+  onSend: (documentContext?: string, documentName?: string) => void;
   isLoading: boolean;
+  getAuthToken: () => Promise<string | null>;
 }
 
-function ChatInput({ value, onChange, onSend, isLoading }: ChatInputProps) {
+function ChatInput({ value, onChange, onSend, isLoading, getAuthToken }: ChatInputProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (inputRef.current) {
@@ -19,23 +25,97 @@ function ChatInput({ value, onChange, onSend, isLoading }: ChatInputProps) {
     }
   }, [value]);
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    onSend();
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const token = await getAuthToken();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/parse-document`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("Backend error:", errText);
+        throw new Error(`Upload failed: ${errText}`);
+      }
+      const data = await res.json();
+      setAttachedFile({ name: data.filename, content: data.content });
+    } catch (error) {
+      console.error(error);
+      alert("Failed to parse document. Please try a different PDF or Word file.");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removeAttachment = () => {
+    setAttachedFile(null);
+  };
+
+  const handleSubmit = (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    if (!value.trim() && !attachedFile) return;
+    
+    let docContext = undefined;
+    let docName = undefined;
+    if (attachedFile) {
+      docContext = `[Attached Document: ${attachedFile.name}]\n${attachedFile.content}\n`;
+      docName = attachedFile.name;
+      setAttachedFile(null);
+    }
+    onSend(docContext, docName);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      onSend();
+      handleSubmit();
     }
   };
 
   return (
     <div className="shrink-0 border-t border-[var(--border-subtle)] bg-white/60 px-4 py-4 md:px-6 md:py-5">
       <div className="mx-auto max-w-4xl">
+        {attachedFile && (
+          <div className="mb-3 flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-1.5 w-max">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span className="text-xs font-medium text-[var(--text-primary)] max-w-[200px] truncate">{attachedFile.name}</span>
+            <button onClick={removeAttachment} className="ml-1 text-[var(--text-muted)] hover:text-red-500">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        )}
         <form onSubmit={handleSubmit}>
           <div className="surface-card-soft flex items-end gap-3 rounded-[28px] p-3">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading || isUploading}
+              className="mb-1 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--text-muted)] transition hover:bg-black/5 hover:text-[var(--text-primary)] disabled:cursor-not-allowed"
+              title="Attach Document (PDF, DOCX, TXT)"
+            >
+              {isUploading ? (
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--text-muted)] border-t-[var(--accent-primary)]"></div>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              )}
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              className="hidden"
+              accept=".pdf,.doc,.docx,.txt,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            />
             <textarea
               ref={inputRef}
               value={value}
@@ -47,7 +127,7 @@ function ChatInput({ value, onChange, onSend, isLoading }: ChatInputProps) {
             />
             <button
               type="submit"
-              disabled={!value.trim() || isLoading}
+              disabled={(!value.trim() && !attachedFile) || isLoading}
               className="primary-button h-12 w-12 cursor-pointer rounded-full p-0 disabled:cursor-not-allowed"
               aria-label="Send message"
             >

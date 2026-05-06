@@ -9,11 +9,14 @@ from app.core.db import get_db
 from app.schemas.profile import UserProfilePayload
 
 
-def calculate_age_band(date_of_birth: date) -> str:
+def calculate_age(date_of_birth: date) -> int:
     today = date.today()
-    age = today.year - date_of_birth.year - (
+    return today.year - date_of_birth.year - (
         (today.month, today.day) < (date_of_birth.month, date_of_birth.day)
     )
+
+def calculate_age_band(date_of_birth: date) -> str:
+    age = calculate_age(date_of_birth)
 
     if age <= 17:
         return "0-17"
@@ -31,6 +34,7 @@ def build_profile_row(user_id: str, payload: UserProfilePayload) -> Dict[str, An
     data.update(
         {
             "user_id": user_id,
+            "exact_age": calculate_age(payload.date_of_birth),
             "age_band": calculate_age_band(payload.date_of_birth),
             "onboarding_completed": True,
         }
@@ -88,6 +92,10 @@ def get_profile_summary(user_id: str) -> str:
         value = profile.get(key)
         if value:
             parts.append(f"{label}: {value}")
+
+    exact_age = profile.get("exact_age")
+    if exact_age:
+        parts.append(f"Exact age: {exact_age}")
 
     if profile.get("is_smoker") is not None:
         parts.append(f"Tobacco/smoker: {'Yes' if profile['is_smoker'] else 'No'}")

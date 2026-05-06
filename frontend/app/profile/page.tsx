@@ -18,13 +18,13 @@ const conditionOptions = [
 const dependentOptions = ['Single', 'Married', 'Kids', 'Senior Parents']
 
 const goalOptions = [
-  'Low Premium + High Cover',
-  'Guaranteed Returns + Insurance',
-  'Market-Linked Wealth Creation',
-  'Lifelong Income / Retirement',
-  'Tax Saving',
-  'Critical Illness Protection',
-  'Motor Insurance',
+  { value: 'Low Premium + High Cover', icon: '🛡️', desc: 'Pure term life protection' },
+  { value: 'Guaranteed Returns + Insurance', icon: '📈', desc: 'Endowment & safe savings' },
+  { value: 'Market-Linked Wealth Creation', icon: '🚀', desc: 'ULIPs for long-term growth' },
+  { value: 'Lifelong Income / Retirement', icon: '🌅', desc: 'Annuity & whole life' },
+  { value: 'Tax Saving', icon: '💰', desc: 'Maximize 80C & 80D deductions' },
+  { value: 'Critical Illness Protection', icon: '🏥', desc: 'Coverage for severe diseases' },
+  { value: 'Motor Insurance', icon: '🚗', desc: 'Vehicle protection & OD cover' },
 ]
 
 interface UserProfile {
@@ -326,34 +326,48 @@ export default function ProfilePage() {
                   </h3>
                 </div>
 
-                <div className="grid gap-5 md:grid-cols-2">
-                  <label className="block">
-                    <span className="field-label">Annual income</span>
-                    <select
-                      name="annualIncome"
-                      defaultValue={profile?.annual_income_band || 'Below Rs 5 Lakh'}
-                      required
-                      className="app-select"
-                    >
-                      <option value="Below Rs 5 Lakh">Below Rs 5 Lakh</option>
-                      <option value="Rs 5 Lakh - Rs 10 Lakh">Rs 5 Lakh - Rs 10 Lakh</option>
-                      <option value="Above Rs 10 Lakh">Above Rs 10 Lakh</option>
-                    </select>
-                  </label>
+                <div className="grid gap-6">
+                  <div>
+                    <span className="field-label mb-3 block">Annual income</span>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {['Below Rs 5 Lakh', 'Rs 5 Lakh - Rs 10 Lakh', 'Above Rs 10 Lakh'].map((option) => (
+                        <label key={option} className="choice-chip cursor-pointer">
+                          <input
+                            type="radio"
+                            name="annualIncome"
+                            value={option}
+                            required
+                            defaultChecked={(profile?.annual_income_band || 'Below Rs 5 Lakh') === option}
+                            className="h-4 w-4 accent-[var(--accent-primary)] shrink-0"
+                          />
+                          <span className="text-sm font-medium text-[var(--text-primary)]">
+                            {option}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
 
-                  <label className="block">
-                    <span className="field-label">Occupation type</span>
-                    <select
-                      name="occupation"
-                      defaultValue={profile?.occupation_type || 'Salaried'}
-                      required
-                      className="app-select"
-                    >
-                      <option value="Salaried">Salaried</option>
-                      <option value="Self-Employed">Self-Employed</option>
-                      <option value="Business Owner">Business Owner</option>
-                    </select>
-                  </label>
+                  <div>
+                    <span className="field-label mb-3 block">Occupation type</span>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {['Salaried', 'Self-Employed', 'Business Owner'].map((option) => (
+                        <label key={option} className="choice-chip cursor-pointer">
+                          <input
+                            type="radio"
+                            name="occupation"
+                            value={option}
+                            required
+                            defaultChecked={(profile?.occupation_type || 'Salaried') === option}
+                            className="h-4 w-4 accent-[var(--accent-primary)] shrink-0"
+                          />
+                          <span className="text-sm font-medium text-[var(--text-primary)]">
+                            {option}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </section>
 
@@ -447,23 +461,39 @@ export default function ProfilePage() {
                     </div>
                   )}
 
-                  <div>
-                    <label className="block">
-                      <span className="field-label">Primary insurance goal</span>
-                      <select
-                        name="primaryGoal"
-                        value={primaryGoal}
-                        onChange={(event) => setPrimaryGoal(event.target.value)}
-                        required
-                        className="app-select"
-                      >
-                        {goalOptions.map((goal) => (
-                          <option key={goal} value={goal}>
-                            {goal}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                  <div className="md:col-span-2">
+                    <span className="field-label mb-3 block">Primary insurance goal</span>
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {goalOptions.map((goal) => (
+                        <label
+                          key={goal.value}
+                          className={`relative flex cursor-pointer flex-col gap-2 rounded-xl border p-4 transition-all ${
+                            primaryGoal === goal.value
+                              ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5 shadow-sm'
+                              : 'border-[var(--border-subtle)] bg-white hover:border-[var(--accent-primary)]/30 hover:bg-gray-50/50'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="primaryGoal"
+                            value={goal.value}
+                            checked={primaryGoal === goal.value}
+                            onChange={(e) => setPrimaryGoal(e.target.value)}
+                            className="absolute right-4 top-4 h-4 w-4 accent-[var(--accent-primary)]"
+                            required
+                          />
+                          <div className="text-2xl">{goal.icon}</div>
+                          <div>
+                            <p className="font-semibold text-[var(--text-primary)] text-sm">
+                              {goal.value}
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                              {goal.desc}
+                            </p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
