@@ -60,84 +60,127 @@ function MessageBubble({ msg }: { msg: Message }) {
     const isPdf = ext === "pdf";
 
     return (
-      <div className="flex justify-end animate-fade-in">
-        <div className="max-w-[85%] md:max-w-[72%] flex flex-col gap-2.5 items-end">
+      <div className="flex justify-end animate-fade-in overflow-hidden">
+        <div className="max-w-[80%] md:max-w-[68%] flex flex-col gap-2.5 items-end min-w-0">
 
-          {/* ── Premium Document Card ── */}
-          {hasDoc && (
-            <div
-              className="flex items-center gap-3.5 rounded-2xl border shadow-md overflow-hidden"
-              style={{
-                background: isPdf
-                  ? "linear-gradient(145deg, #fff8f8 0%, #fff0f0 60%, #ffe4e4 100%)"
-                  : "linear-gradient(145deg, #f0f4ff 0%, #e8effe 60%, #dde6ff 100%)",
-                borderColor: isPdf ? "#f5c6c6" : "#b8caff",
-                width: "220px",
-                boxShadow: isPdf
-                  ? "0 4px 16px rgba(220,38,38,0.10), 0 1px 4px rgba(0,0,0,0.06)"
-                  : "0 4px 16px rgba(59,110,246,0.10), 0 1px 4px rgba(0,0,0,0.06)",
-              }}
-            >
-              {/* Brand icon block */}
+          {/* ── Document Attachment Card ── */}
+          {hasDoc && (() => {
+            const fileName = msg.attachedDocumentName ?? "";
+            const dotIdx = fileName.lastIndexOf(".");
+            const baseName = dotIdx > -1 ? fileName.slice(0, dotIdx) : fileName;
+            const extLabel = isPdf ? "PDF" : "DOCX";
+            const iconBg = isPdf
+              ? "linear-gradient(150deg,#e02020 0%,#b00000 100%)"
+              : "linear-gradient(150deg,#2b6cb0 0%,#1a4480 100%)";
+            const cardBg = isPdf
+              ? "linear-gradient(135deg,#fff7f7 0%,#ffe8e8 100%)"
+              : "linear-gradient(135deg,#f0f6ff 0%,#ddeaff 100%)";
+            const borderColor = isPdf ? "#f9c0c0" : "#b3ccff";
+            const textColor   = isPdf ? "#7f1d1d" : "#1e3a8a";
+            const subColor    = isPdf ? "#ef444466" : "#3b82f666";
+
+            return (
               <div
-                className="flex h-full items-center justify-center px-4 py-4 shrink-0"
                 style={{
-                  background: isPdf
-                    ? "linear-gradient(160deg, #e02020 0%, #c00000 100%)"
-                    : "linear-gradient(160deg, #2b579a 0%, #185abd 100%)",
+                  width: "260px",
+                  background: cardBg,
+                  border: `1.5px solid ${borderColor}`,
+                  borderRadius: "18px",
+                  overflow: "hidden",
+                  boxShadow: isPdf
+                    ? "0 6px 20px rgba(220,38,38,0.12),0 1px 4px rgba(0,0,0,0.06)"
+                    : "0 6px 20px rgba(59,130,246,0.12),0 1px 4px rgba(0,0,0,0.06)",
                 }}
               >
-                {isPdf ? (
-                  /* Adobe Acrobat PDF logo */
-                  <svg width="28" height="28" viewBox="0 0 48 48" fill="none">
-                    <rect width="48" height="48" rx="6" fill="none"/>
-                    {/* White "PDF" style icon */}
-                    <path d="M8 6h22l10 10v26a2 2 0 01-2 2H8a2 2 0 01-2-2V8a2 2 0 012-2z" fill="white" fillOpacity="0.15"/>
-                    <path d="M30 6l10 10H30V6z" fill="white" fillOpacity="0.3"/>
-                    <text x="7" y="35" fontFamily="Arial,sans-serif" fontWeight="900" fontSize="13" fill="white" letterSpacing="0.5">PDF</text>
-                    <path d="M8 6h22l10 10" stroke="white" strokeWidth="1" strokeOpacity="0.4" fill="none"/>
-                  </svg>
-                ) : (
-                  /* Microsoft Word W logo */
-                  <svg width="28" height="28" viewBox="0 0 48 48" fill="none">
-                    <rect width="48" height="48" rx="6" fill="none"/>
-                    {/* Word "W" lettermark */}
-                    <text x="3" y="36" fontFamily="Arial,sans-serif" fontWeight="900" fontSize="36" fill="white" letterSpacing="-2">W</text>
-                  </svg>
-                )}
-              </div>
+                {/* Top row: icon + meta */}
+                <div className="flex items-center gap-0" style={{ height: "72px" }}>
 
-              {/* File details */}
-              <div className="min-w-0 flex-1 py-3 pr-4">
-                <p
-                  className="truncate text-[13px] font-semibold leading-tight"
-                  style={{ color: isPdf ? "#991b1b" : "#1e3a8a" }}
-                  title={msg.attachedDocumentName}
-                >
-                  {msg.attachedDocumentName}
-                </p>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span
-                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                  {/* Square icon tile */}
+                  <div
+                    className="flex shrink-0 items-center justify-center"
                     style={{
-                      background: isPdf ? "#dc262222" : "#2b579a22",
-                      color: isPdf ? "#dc2626" : "#2b579a",
+                      width: "72px",
+                      height: "72px",
+                      background: iconBg,
                     }}
                   >
-                    {isPdf ? "PDF" : "DOCX"}
-                  </span>
-                  <span className="text-[11px]" style={{ color: isPdf ? "#dc262266" : "#2b579a66" }}>
-                    · Attached for analysis
+                    {isPdf ? (
+                      /* Adobe-style PDF icon */
+                      <svg width="34" height="34" viewBox="0 0 48 48" fill="none">
+                        <rect x="6" y="2" width="28" height="36" rx="3" fill="white" fillOpacity="0.18"/>
+                        <path d="M28 2l8 8v28a2 2 0 01-2 2H8a2 2 0 01-2-2V4a2 2 0 012-2h20z" fill="white" fillOpacity="0.12" stroke="white" strokeOpacity="0.3" strokeWidth="1"/>
+                        <path d="M28 2v8h8" fill="white" fillOpacity="0.25"/>
+                        <text x="6" y="34" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="15" fill="white" letterSpacing="0.5">PDF</text>
+                      </svg>
+                    ) : (
+                      /* Microsoft Word W */
+                      <svg width="34" height="34" viewBox="0 0 48 48" fill="none">
+                        <text x="1" y="38" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="40" fill="white" letterSpacing="-3">W</text>
+                      </svg>
+                    )}
+                  </div>
+
+                  {/* File info */}
+                  <div className="flex-1 min-w-0 px-3 py-2.5">
+                    {/* File name (base, no extension) */}
+                    <p
+                      className="text-[13px] font-bold leading-snug truncate"
+                      style={{ color: textColor }}
+                      title={fileName}
+                    >
+                      {baseName}
+                    </p>
+
+                    {/* Extension badge + status */}
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <span
+                        className="rounded-md px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
+                        style={{
+                          background: isPdf ? "#dc262218" : "#2563eb18",
+                          color: isPdf ? "#dc2626" : "#2563eb",
+                        }}
+                      >
+                        {extLabel}
+                      </span>
+                      <span className="text-[11px]" style={{ color: subColor }}>
+                        · Ready to analyse
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom strip */}
+                <div
+                  className="flex items-center gap-1.5 px-3 py-1.5"
+                  style={{
+                    background: isPdf ? "rgba(220,38,38,0.06)" : "rgba(59,130,246,0.06)",
+                    borderTop: `1px solid ${borderColor}`,
+                  }}
+                >
+                  {/* Pulse dot */}
+                  <span
+                    className="h-1.5 w-1.5 rounded-full shrink-0"
+                    style={{ background: isPdf ? "#ef4444" : "#3b82f6" }}
+                  />
+                  <span className="text-[11px] font-medium" style={{ color: subColor.replace("66","cc") }}>
+                    Attached for AI analysis
                   </span>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
+
+
 
           {/* User text bubble */}
           {msg.content && (
-            <div className="rounded-[24px] bg-[var(--accent-primary)] px-5 py-3.5 text-white shadow-sm">
-              <p className="text-[15px] leading-7 whitespace-pre-wrap">{msg.content}</p>
+            <div className="rounded-[24px] bg-[var(--accent-primary)] px-5 py-3.5 text-white shadow-sm min-w-0 overflow-hidden">
+              <p
+                className="text-[15px] leading-7"
+                style={{ wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
+              >
+                {msg.content}
+              </p>
               <p className="mt-2 text-right text-[11px] text-white/60">
                 {formatTime(msg.timestamp)}
               </p>
