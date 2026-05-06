@@ -56,9 +56,13 @@ def _postprocess_grounded_answer(answer: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned or answer.strip()
 
+_chat_client = None
 
 def get_chat_client() -> InferenceClient:
-    return InferenceClient(token=settings.huggingface_api_token)
+    global _chat_client
+    if _chat_client is None:
+        _chat_client = InferenceClient(token=settings.huggingface_api_token)
+    return _chat_client
 
 
 def _candidate_models() -> List[str]:
@@ -302,20 +306,24 @@ def generate_grounded_answer(
 ) -> str:
     """
     Strict grounded answering using retrieved evidence.
+    Context priority: Question → RAG evidence → Chat history (20+) → Profile (optional).
+    Profile is omitted entirely when the question is about a third party.
     """
     client = get_chat_client()
+
+    # ── Build conversation history (last 20 messages for deep context) ──
     conversation_context = ""
     if history:
-        recent_user_questions = [
-            msg["content"].strip()
-            for msg in history
-            if msg.get("role") == "user" and msg.get("content")
-        ][-4:]
-        if recent_user_questions:
-            conversation_context = "Conversation background (secondary, not evidence):\n" + "\n".join(
-                f"- {question}" for question in recent_user_questions
-            )
+        recent = history[-20:]
+        history_lines = [
+            f"{msg['role'].capitalize()}: {msg['content'].strip()}"
+            for msg in recent
+            if msg.get("content")
+        ]
+        if history_lines:
+            conversation_context = "Recent conversation history (secondary context, NOT evidence):\n" + "\n".join(history_lines)
 
+    # ── Build RAG evidence ──
     context_text = "\n\n".join(
         (
             f"Document: {c.get('document_title', 'Unknown Document')}\n"
@@ -326,27 +334,45 @@ def generate_grounded_answer(
         for c in context_chunks
     )
 
+    # ── System prompt with intelligent context handling ──
     system_prompt = (
         "You are FinBot, an incredibly intelligent, highly conversational, and expert AI finance and insurance assistant.\n"
-        "Your goal is to provide brilliant, easy-to-understand, and highly accurate answers.\n"
-        "Use the provided context as your primary source of truth. If the context contains the answer, base your response on it.\n"
-        "If the context does not contain enough information, you may use your general expertise in finance, banking, and insurance to help the user, but politely clarify that you are drawing from general knowledge.\n"
-        "Write like an intelligent chatbot: clear, direct, and natural. Feel like a smart human expert—friendly, analytical, and articulate.\n"
-        "Do NOT mention document names, page numbers, citations, source labels, or phrases like "
-        "'according to the provided context' in the answer body. The UI already shows sources separately.\n"
-        "CRITICAL RULE: You are strictly a financial, banking, and insurance assistant. If the user asks ANY question unrelated to finance, insurance, taxes, banking, or the provided context (such as coding, general knowledge, jokes, or recipe questions), you MUST politely decline to answer and remind them of your purpose.\n"
-        "Keep retrieved evidence as primary context. Chat history and profile are secondary.\n"
+        "Your goal is to provide brilliant, easy-to-understand, and highly accurate answers.\n\n"
+        "CONTEXT PRIORITY (follow this order strictly):\n"
+        "1. QUESTION — Focus entirely on what the user is actually asking RIGHT NOW. Understand the real intent first.\n"
+        "2. RETRIEVED EVIDENCE — Use the document context below as your primary source of truth.\n"
+        "3. CONVERSATION HISTORY — Use previous messages to understand follow-ups and ongoing topics.\n"
+        "4. PROFILE DATA — Read the intelligent profile rules below before using profile information.\n"
+        "5. GENERAL KNOWLEDGE — If evidence is insufficient, use your finance expertise but clearly say so.\n\n"
+        "INTELLIGENT PROFILE USAGE (this is critical):\n"
+        "You have access to the user's profile data. However, you MUST intelligently decide WHETHER to use it:\n"
+        "- FIRST, analyze the question and conversation: WHO is the question actually about?\n"
+        "- If the question is about THE USER THEMSELVES (their own insurance, their own finances, their own plans), "
+        "then USE the profile data to personalize your answer.\n"
+        "- If the question is about ANYONE ELSE (a family member, friend, colleague, or any other person — "
+        "whether explicitly mentioned or implied from context), then COMPLETELY IGNORE the profile data. "
+        "Give generic, universally applicable advice for that other person's situation.\n"
+        "- If the question is GENERAL (not about any specific person, just asking for information), "
+        "then DO NOT personalize with profile data. Give a factual, general answer.\n"
+        "- When in doubt about who the question is about, default to giving GENERIC advice without profile personalization.\n\n"
+        "RULES:\n"
+        "- Write like a smart human expert: clear, direct, natural, and friendly.\n"
+        "- Do NOT mention document names, page numbers, citations, or 'according to the context'. The UI shows sources separately.\n"
+        "- You are strictly a financial/banking/insurance assistant. Politely decline non-finance questions.\n"
     )
     if profile_summary:
-        system_prompt += f"\nProfile summary (secondary):\n{profile_summary}\n"
+        system_prompt += f"\nUser profile data (use ONLY when the question is about the user themselves):\n{profile_summary}\n"
 
-    user_prompt = (
-        f"{conversation_context}\n\n" if conversation_context else ""
-    ) + (
-        f"Context:\n{context_text}\n\n"
-        f"Question: {query}\n\n"
-        "Answer naturally and directly. Do not include citations or source references in the answer body."
-    )
+    # ── User prompt with clear sections ──
+    user_prompt_parts = []
+    if conversation_context:
+        user_prompt_parts.append(conversation_context)
+    if context_text:
+        user_prompt_parts.append(f"Retrieved evidence (PRIMARY source of truth):\n{context_text}")
+    user_prompt_parts.append(f"Question: {query}")
+    user_prompt_parts.append("Answer naturally and directly. Do not include citations or source references in the answer body.")
+
+    user_prompt = "\n\n".join(user_prompt_parts)
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.append({"role": "user", "content": user_prompt})
@@ -365,3 +391,102 @@ def generate_grounded_answer(
             logger.error(f"Error calling LLM model '{model_name}' for grounded answer: {e}")
 
     return "Sorry, I am currently unable to generate an answer due to an AI service error."
+
+
+def stream_grounded_answer(
+    query: str,
+    context_chunks: List[Dict],
+    history: Optional[List[Dict]] = None,
+    profile_summary: str = "",
+):
+    """
+    Streaming version of generate_grounded_answer.
+    Yields token strings as they arrive from the LLM.
+    Same context hierarchy: Question → Evidence → History (20) → Profile (optional).
+    """
+    client = get_chat_client()
+
+    # ── Conversation history (last 20 messages) ──
+    conversation_context = ""
+    if history:
+        recent = history[-20:]
+        history_lines = [
+            f"{msg['role'].capitalize()}: {msg['content'].strip()}"
+            for msg in recent
+            if msg.get("content")
+        ]
+        if history_lines:
+            conversation_context = "Recent conversation history (secondary context, NOT evidence):\n" + "\n".join(history_lines)
+
+    # ── RAG evidence ──
+    context_text = "\n\n".join(
+        (
+            f"Document: {c.get('document_title', 'Unknown Document')}\n"
+            f"Page: {_chunk_page(c)}\n"
+            f"Section: {c.get('section_title', 'General')}\n"
+            f"Text: {_chunk_text(c)}"
+        )
+        for c in context_chunks
+    )
+
+    # ── System prompt with intelligent context handling ──
+    system_prompt = (
+        "You are FinBot, an incredibly intelligent, highly conversational, and expert AI finance and insurance assistant.\n"
+        "Your goal is to provide brilliant, easy-to-understand, and highly accurate answers.\n\n"
+        "CONTEXT PRIORITY (follow this order strictly):\n"
+        "1. QUESTION — Focus entirely on what the user is actually asking RIGHT NOW. Understand the real intent first.\n"
+        "2. RETRIEVED EVIDENCE — Use the document context below as your primary source of truth.\n"
+        "3. CONVERSATION HISTORY — Use previous messages to understand follow-ups and ongoing topics.\n"
+        "4. PROFILE DATA — Read the intelligent profile rules below before using profile information.\n"
+        "5. GENERAL KNOWLEDGE — If evidence is insufficient, use your finance expertise but clearly say so.\n\n"
+        "INTELLIGENT PROFILE USAGE (this is critical):\n"
+        "You have access to the user's profile data. However, you MUST intelligently decide WHETHER to use it:\n"
+        "- FIRST, analyze the question and conversation: WHO is the question actually about?\n"
+        "- If the question is about THE USER THEMSELVES (their own insurance, their own finances, their own plans), "
+        "then USE the profile data to personalize your answer.\n"
+        "- If the question is about ANYONE ELSE (a family member, friend, colleague, or any other person — "
+        "whether explicitly mentioned or implied from context), then COMPLETELY IGNORE the profile data. "
+        "Give generic, universally applicable advice for that other person's situation.\n"
+        "- If the question is GENERAL (not about any specific person, just asking for information), "
+        "then DO NOT personalize with profile data. Give a factual, general answer.\n"
+        "- When in doubt about who the question is about, default to giving GENERIC advice without profile personalization.\n\n"
+        "RULES:\n"
+        "- Write like a smart human expert: clear, direct, natural, and friendly.\n"
+        "- Do NOT mention document names, page numbers, citations, or 'according to the context'. The UI shows sources separately.\n"
+        "- You are strictly a financial/banking/insurance assistant. Politely decline non-finance questions.\n"
+    )
+    if profile_summary:
+        system_prompt += f"\nUser profile data (use ONLY when the question is about the user themselves):\n{profile_summary}\n"
+
+    # ── User prompt ──
+    user_prompt_parts = []
+    if conversation_context:
+        user_prompt_parts.append(conversation_context)
+    if context_text:
+        user_prompt_parts.append(f"Retrieved evidence (PRIMARY source of truth):\n{context_text}")
+    user_prompt_parts.append(f"Question: {query}")
+    user_prompt_parts.append("Answer naturally and directly. Do not include citations or source references in the answer body.")
+
+    user_prompt = "\n\n".join(user_prompt_parts)
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.append({"role": "user", "content": user_prompt})
+
+    for model_name in _candidate_models():
+        try:
+            stream = client.chat_completion(
+                model=model_name,
+                messages=messages,
+                max_tokens=500,
+                temperature=0.40,
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+            return  # successful — stop trying models
+        except Exception as e:
+            _remember_unsupported_model(model_name, e)
+            logger.error(f"Streaming error for model '{model_name}': {e}")
+
+    yield "Sorry, I am currently unable to generate an answer due to an AI service error."

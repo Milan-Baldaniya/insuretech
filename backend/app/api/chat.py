@@ -1,10 +1,12 @@
+import json
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from app.schemas.chat import ChatRequest, ChatResponse, SourceCitation
 from app.core.config import get_settings
 from app.core.auth import get_current_user_id
 from app.schemas.profile import UserProfilePayload
-from app.services.llm import generate_grounded_answer
+from app.services.llm import generate_grounded_answer, stream_grounded_answer
 from app.services.retrieval import retrieve_context, confidence_for_chunks
 from app.services.memory import create_session, delete_session, get_all_sessions, get_recent_messages, get_session_history, save_message, session_belongs_to_user
 from app.services.profile import get_profile as fetch_profile
@@ -18,6 +20,7 @@ def _chunk_text(chunk: dict) -> str:
 
 def _chunk_page_number(chunk: dict):
     return chunk.get("page_start", chunk.get("page_number"))
+
 
 
 @router.post("/api/chat", response_model=ChatResponse)
@@ -42,7 +45,7 @@ async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)
     save_message(session_id, user_id, "user", request.question)
     history = get_recent_messages(session_id, user_id, limit=50)
     
-    # Fetch user profile for personalized answers
+    # Always pass profile — the LLM intelligently decides whether to use it
     profile_summary = get_profile_summary(user_id)
     
     try:
@@ -100,6 +103,104 @@ async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)
             created_at=fallback_message["created_at"] if fallback_message else datetime.utcnow(),
             confidence=0.0
         )
+
+
+@router.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
+    """
+    SSE streaming chat endpoint.
+    Sends token events as they arrive, then a final metadata event with sources.
+    """
+    session_id = request.session_id
+
+    if not session_id:
+        title = request.question[:35] + ("..." if len(request.question) > 35 else "")
+        session_id = create_session(user_id, title)
+        if not session_id:
+            raise HTTPException(status_code=500, detail="Failed to create chat session.")
+    elif not session_belongs_to_user(session_id, user_id):
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    save_message(session_id, user_id, "user", request.question)
+    history = get_recent_messages(session_id, user_id, limit=50)
+
+    # Always pass profile — the LLM intelligently decides whether to use it
+    profile_summary = get_profile_summary(user_id)
+
+    # Run retrieval synchronously before streaming
+    try:
+        retrieval = retrieve_context(request.question, history)
+        top_chunks = retrieval["final_chunks"]
+        confidence = confidence_for_chunks(top_chunks)
+
+        if retrieval["error"] or confidence < settings.rag_similarity_threshold:
+            top_chunks = []
+            confidence = 0.0
+    except Exception as e:
+        print(f"Retrieval error in stream: {e}")
+        top_chunks = []
+        confidence = 0.0
+
+    def event_generator():
+        full_answer = []
+        try:
+            for token in stream_grounded_answer(
+                query=request.question,
+                context_chunks=top_chunks,
+                history=history,
+                profile_summary=profile_summary,
+            ):
+                full_answer.append(token)
+                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+
+            # Save the complete answer
+            complete_text = "".join(full_answer)
+            assistant_message = save_message(session_id, user_id, "assistant", complete_text)
+
+            # Build citations
+            sources = []
+            for chunk in top_chunks:
+                preview = _chunk_text(chunk)[:100].replace('\n', ' ') + "..."
+                sources.append({
+                    "chunk_id": chunk.get("chunk_id"),
+                    "document_id": chunk.get("document_id"),
+                    "document_title": chunk.get("document_title", "Unknown Document"),
+                    "page_start": chunk.get("page_start"),
+                    "page_end": chunk.get("page_end"),
+                    "section_title": chunk.get("section_title"),
+                    "page_number": _chunk_page_number(chunk),
+                    "chunk_preview": preview,
+                    "relevance_score": chunk.get("blended_score", chunk.get("similarity", 0.0)),
+                })
+
+            meta = {
+                "type": "done",
+                "session_id": session_id,
+                "confidence": confidence,
+                "sources": sources,
+                "created_at": (
+                    assistant_message["created_at"]
+                    if assistant_message
+                    else datetime.utcnow().isoformat()
+                ),
+            }
+            yield f"data: {json.dumps(meta)}\n\n"
+        except Exception as e:
+            print(f"Stream error: {e}")
+            error_msg = "Sorry, I am currently unable to process your request."
+            yield f"data: {json.dumps({'type': 'token', 'content': error_msg})}\n\n"
+            save_message(session_id, user_id, "assistant", error_msg)
+            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'confidence': 0.0, 'sources': [], 'created_at': datetime.utcnow().isoformat()})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/api/retrieval/debug")

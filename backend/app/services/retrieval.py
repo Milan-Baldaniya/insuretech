@@ -1,8 +1,11 @@
 """
 Retrieval service for Phase 4/5 runtime flow.
+Optimized for speed: parallel search, embedding cache.
+LLM query rewriting restored for follow-up context understanding.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
@@ -13,6 +16,7 @@ from app.services.llm import expand_query
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+_search_pool = ThreadPoolExecutor(max_workers=2)
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does",
     "for", "from", "how", "if", "in", "is", "it", "its", "of", "on", "or",
@@ -120,6 +124,7 @@ def _run_keyword_search_with_fallback(
 
 
 def should_rewrite_query(query: str, history: List[Dict]) -> bool:
+    """Decide whether to use LLM to rewrite a follow-up or short query."""
     words = [w for w in query.strip().split() if w]
     short_query = len(words) <= 6
     follow_up_markers = {"this", "that", "it", "they", "these", "those", "above", "same"}
@@ -232,6 +237,8 @@ def retrieve_context(
 ) -> Dict:
     intent = classify_intent(query)
     preferred_source_group_filter = source_group_filter_for_intent(intent)
+
+    # LLM query rewrite for follow-up / short queries (restores context understanding)
     rewritten_query = expand_query(query, history) if should_rewrite_query(query, history) else query
 
     vectors = generate_embeddings([rewritten_query])
@@ -250,17 +257,33 @@ def retrieve_context(
             "error": "embedding_failed",
         }
     query_embedding = vectors[0]
+    candidates = settings.rag_retrieval_candidates
 
-    try:
-        vector_hits, applied_vector_filter = _run_vector_search_with_fallback(
-            query_embedding=query_embedding,
-            match_count=settings.rag_retrieval_candidates,
-            similarity_threshold=settings.rag_similarity_threshold,
+    # ── Run vector + keyword search IN PARALLEL ──
+    vector_future = _search_pool.submit(
+        _run_vector_search_with_fallback,
+        query_embedding=query_embedding,
+        match_count=candidates,
+        similarity_threshold=settings.rag_similarity_threshold,
+        source_group_filter=preferred_source_group_filter,
+        document_id_filter=document_id_filter,
+    )
+
+    keyword_future = None
+    if settings.enable_hybrid_search:
+        keyword_future = _search_pool.submit(
+            _run_keyword_search_with_fallback,
+            query_text=rewritten_query,
+            match_count=candidates,
             source_group_filter=preferred_source_group_filter,
             document_id_filter=document_id_filter,
         )
+
+    # Collect vector results
+    try:
+        vector_hits, applied_vector_filter = vector_future.result(timeout=10)
     except Exception as exc:
-        logger.exception("Vector search failed for query '%s': %s", rewritten_query, exc)
+        logger.exception("Vector search failed: %s", exc)
         return {
             "intent": intent,
             "rewritten_query": rewritten_query,
@@ -275,20 +298,17 @@ def retrieve_context(
             "error": "vector_search_failed",
         }
 
+    # Collect keyword results
     keyword_hits: List[Dict] = []
+    applied_keyword_filter = preferred_source_group_filter
     merged = {str(c["chunk_id"]): c for c in vector_hits}
-    if settings.enable_hybrid_search:
+
+    if keyword_future is not None:
         try:
-            keyword_hits, applied_keyword_filter = _run_keyword_search_with_fallback(
-                query_text=rewritten_query,
-                match_count=settings.rag_retrieval_candidates,
-                source_group_filter=preferred_source_group_filter,
-                document_id_filter=document_id_filter,
-            )
+            keyword_hits, applied_keyword_filter = keyword_future.result(timeout=10)
         except Exception as exc:
-            logger.exception("Keyword search failed for query '%s': %s", rewritten_query, exc)
+            logger.exception("Keyword search failed: %s", exc)
             keyword_hits = []
-            applied_keyword_filter = preferred_source_group_filter
 
         for row in keyword_hits:
             merged.setdefault(str(row["chunk_id"]), row)
