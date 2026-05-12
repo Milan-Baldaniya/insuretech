@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_key: str = ""
     supabase_service_role_key: str = ""
+    admin_emails: str = ""
+    admin_user_ids: str = ""
 
     # ── Hugging Face ──
     huggingface_api_token: str = ""

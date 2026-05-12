@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from app.core.auth import get_current_admin_user
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.document import (
@@ -28,7 +29,11 @@ from app.schemas.chat import (
 from app.services.embeddings import generate_embeddings
 from app.services.ingestion import extract_pages, ingest_pdf_pipeline
 
-router = APIRouter(prefix="/api/documents", tags=["documents"])
+router = APIRouter(
+    prefix="/api/documents",
+    tags=["documents"],
+    dependencies=[Depends(get_current_admin_user)],
+)
 settings = get_settings()
 
 
