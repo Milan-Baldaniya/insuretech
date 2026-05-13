@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from app.schemas.chat import ChatRequest, ChatResponse, SourceCitation
 from app.core.config import get_settings
-from app.core.auth import get_current_user_id
+from app.core.auth import get_current_user, get_current_user_id, is_admin_user
 from app.schemas.profile import UserProfilePayload
 from app.services.llm import generate_grounded_answer, stream_grounded_answer
 from app.services.retrieval import retrieve_context, confidence_for_chunks
@@ -428,18 +428,21 @@ async def update_profile(
 
 
 @router.get("/api/auth/me")
-async def auth_me(user_id: str = Depends(get_current_user_id)):
+async def auth_me(user = Depends(get_current_user)):
     """Lightweight bootstrap endpoint — confirms the user is authenticated and returns onboarding status."""
+    user_id = user.id
     try:
         profile = fetch_profile(user_id)
         onboarding_done = profile.get("onboarding_completed", False) if profile else False
         
         return {
             "user_id": user_id,
-            "onboarding_completed": onboarding_done
+            "onboarding_completed": onboarding_done,
+            "is_admin": is_admin_user(user),
         }
     except Exception:
         return {
             "user_id": user_id,
-            "onboarding_completed": False
+            "onboarding_completed": False,
+            "is_admin": is_admin_user(user),
         }

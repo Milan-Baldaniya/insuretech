@@ -19,6 +19,8 @@ interface ChatSidebarProps {
   onDeleteSession: (sid: string) => void;
   onLogout: () => void;
   onProfile: () => void;
+  onAdminDashboard?: () => void;
+  isAdmin?: boolean;
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-IN", {
@@ -45,6 +47,8 @@ function ChatSidebar({
   onDeleteSession,
   onLogout,
   onProfile,
+  onAdminDashboard,
+  isAdmin = false,
 }: ChatSidebarProps) {
   return (
     <div className="surface-card flex h-full flex-col overflow-hidden p-4 md:p-5">
@@ -158,6 +162,15 @@ function ChatSidebar({
             </div>
           </div>
         </div>
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={onAdminDashboard}
+            className="secondary-button w-full cursor-pointer px-4 py-3 text-sm"
+          >
+            Admin dashboard
+          </button>
+        ) : null}
         <div className="grid grid-cols-2 gap-2">
           <button type="button" onClick={onProfile} className="secondary-button cursor-pointer px-4 py-3 text-sm">
             Profile

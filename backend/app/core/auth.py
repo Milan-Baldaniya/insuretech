@@ -39,6 +39,22 @@ def get_current_user_id(user = Depends(get_current_user)) -> str:
     return user.id
 
 
+def is_admin_user(user) -> bool:
+    """Return whether a Supabase user should receive admin-only UI/API access."""
+    app_metadata = getattr(user, "app_metadata", None) or {}
+    role = str(app_metadata.get("role", "")).lower()
+    is_metadata_admin = role == "admin" or app_metadata.get("is_admin") is True
+
+    email = str(getattr(user, "email", "") or "").lower()
+    user_id = str(getattr(user, "id", "") or "").lower()
+    is_configured_admin = (
+        email in _configured_values(settings.admin_emails)
+        or user_id in _configured_values(settings.admin_user_ids)
+    )
+
+    return is_metadata_admin or is_configured_admin
+
+
 def get_current_admin_user(user = Depends(get_current_user)):
     """
     Require an admin account.
@@ -51,18 +67,7 @@ def get_current_admin_user(user = Depends(get_current_user)):
     - ADMIN_EMAILS=admin@example.com,owner@example.com
     - ADMIN_USER_IDS=<supabase-user-id>
     """
-    app_metadata = getattr(user, "app_metadata", None) or {}
-    role = str(app_metadata.get("role", "")).lower()
-    is_metadata_admin = role == "admin" or app_metadata.get("is_admin") is True
-
-    email = str(getattr(user, "email", "") or "").lower()
-    user_id = str(getattr(user, "id", "") or "").lower()
-    is_configured_admin = (
-        email in _configured_values(settings.admin_emails)
-        or user_id in _configured_values(settings.admin_user_ids)
-    )
-
-    if not (is_metadata_admin or is_configured_admin):
+    if not is_admin_user(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access is required.",

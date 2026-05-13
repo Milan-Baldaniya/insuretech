@@ -56,6 +56,7 @@ export default function ChatPage() {
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -126,6 +127,7 @@ export default function ChatPage() {
           });
           if (res.ok) {
             const data = await res.json();
+            setIsAdmin(Boolean(data.is_admin));
             if (!data.onboarding_completed) { router.push("/onboarding"); return; }
           }
         } catch (e) { console.error("Error checking onboarding:", e); }
@@ -359,6 +361,11 @@ export default function ChatPage() {
     router.push("/profile");
   }, [router]);
 
+  const handleAdminDashboard = useCallback(() => {
+    setIsSidebarOpen(false);
+    router.push("/admin");
+  }, [router]);
+
   // Loading screen
   if (checkingAuth) {
     return (
@@ -398,6 +405,8 @@ export default function ChatPage() {
             onDeleteSession={handleDeleteSession}
             onLogout={handleLogout}
             onProfile={handleProfile}
+            onAdminDashboard={handleAdminDashboard}
+            isAdmin={isAdmin}
           />
         </aside>
 
@@ -415,6 +424,8 @@ export default function ChatPage() {
               onDeleteSession={handleDeleteSession}
               onLogout={handleLogout}
               onProfile={handleProfile}
+              onAdminDashboard={handleAdminDashboard}
+              isAdmin={isAdmin}
             />
           </div>
         </aside>
