@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from huggingface_hub import InferenceClient
 
 from app.core.config import get_settings
+from app.services.product_catalog import correct_product_attributions, product_catalog_context
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +70,14 @@ PROFILE-TRIGGERED ACTIONS (If Profile Data is used):
 - Age 60-75 -> Map to Star Senior Citizens Red Carpet or similar.
 """
 
+PRODUCT_ACCURACY_PROMPT = """
+PRODUCT ACCURACY GUARDRAILS:
+- Never merge any product name with the wrong insurer, brand, category, rider, or plan variant.
+- If canonical product catalog matches are provided below, treat those product-to-insurer mappings as authoritative.
+- If retrieved evidence and the canonical product catalog do not clearly show the insurer for a product, say that the insurer should be verified from the official policy brochure before purchase.
+- For family floater or dependent-cover questions, do not assume adult children or their spouse can be added to a senior citizen plan unless the evidence explicitly says so.
+"""
+
 PERSONA_PROMPT = """
 ROLE & PERSONA:
 You are FinBot, an elite Chief Actuary and Senior Financial Advisor with over 30 years of top-tier experience in the Indian insurance, banking, and wealth management sectors. 
@@ -111,6 +120,7 @@ def _postprocess_grounded_answer(answer: str) -> str:
 
     cleaned = "\n".join(lines).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = correct_product_attributions(cleaned)
     return cleaned or answer.strip()
 
 _chat_client = None
@@ -391,6 +401,7 @@ def generate_grounded_answer(
         )
         for c in context_chunks
     )
+    catalog_context = product_catalog_context(f"{query}\n{context_text}")
 
     # ── System prompt with intelligent context handling ──
     system_prompt = (
@@ -425,7 +436,7 @@ def generate_grounded_answer(
             "Do not silently drop later goals or answer only for the first selected goal.\n"
         )
 
-    system_prompt += f"\n{UNIFIED_RULE_ENGINE_PROMPT}\n"
+    system_prompt += f"\n{UNIFIED_RULE_ENGINE_PROMPT}\n{PRODUCT_ACCURACY_PROMPT}\n"
 
     # ── User prompt with clear sections ──
     user_prompt_parts = []
@@ -433,8 +444,16 @@ def generate_grounded_answer(
         user_prompt_parts.append(conversation_context)
     if context_text:
         user_prompt_parts.append(f"Retrieved evidence (PRIMARY source of truth):\n{context_text}")
+    if catalog_context:
+        user_prompt_parts.append(catalog_context)
     user_prompt_parts.append(f"Question: {query}")
-    user_prompt_parts.append("Answer naturally and directly. Do not include citations or source references in the answer body.")
+    if context_text:
+        user_prompt_parts.append("Answer naturally and directly. Do not include citations or source references in the answer body.")
+    else:
+        user_prompt_parts.append(
+            "No retrieved evidence was available. Give only cautious general guidance, avoid naming specific products, "
+            "and say that product availability/insurer details should be verified from official brochures before purchase."
+        )
 
     user_prompt = "\n\n".join(user_prompt_parts)
 
@@ -526,6 +545,7 @@ def stream_grounded_answer(
         )
         for c in context_chunks
     )
+    catalog_context = product_catalog_context(f"{query}\n{context_text}")
 
     # ── System prompt with intelligent context handling ──
     system_prompt = (
@@ -560,14 +580,22 @@ def stream_grounded_answer(
             "Do not silently drop later goals or answer only for the first selected goal.\n"
         )
 
-    system_prompt += f"\n{UNIFIED_RULE_ENGINE_PROMPT}\n"
+    system_prompt += f"\n{UNIFIED_RULE_ENGINE_PROMPT}\n{PRODUCT_ACCURACY_PROMPT}\n"
 
     # ── Build first user turn: system context (RAG evidence) ──
     # The first user message injects evidence + instructions; history follows as real turns
     first_user_parts = []
     if context_text:
         first_user_parts.append(f"Retrieved evidence (use as primary source of truth):\n{context_text}")
-    first_user_parts.append("Answer naturally and directly. Do not include citations or source references.")
+    if catalog_context:
+        first_user_parts.append(catalog_context)
+    if context_text:
+        first_user_parts.append("Answer naturally and directly. Do not include citations or source references.")
+    else:
+        first_user_parts.append(
+            "No retrieved evidence was available. Give only cautious general guidance, avoid naming specific products, "
+            "and say that product availability/insurer details should be verified from official brochures before purchase."
+        )
     first_user_content = "\n\n".join(first_user_parts)
 
     # ── Build the messages array with real conversation turns ──
@@ -596,8 +624,16 @@ def stream_grounded_answer(
         user_prompt_parts = []
         if context_text:
             user_prompt_parts.append(f"Retrieved evidence (PRIMARY source of truth):\n{context_text}")
+        if catalog_context:
+            user_prompt_parts.append(catalog_context)
         user_prompt_parts.append(f"Question: {query}")
-        user_prompt_parts.append("Answer naturally and directly. Do not include citations or source references in the answer body.")
+        if context_text:
+            user_prompt_parts.append("Answer naturally and directly. Do not include citations or source references in the answer body.")
+        else:
+            user_prompt_parts.append(
+                "No retrieved evidence was available. Give only cautious general guidance, avoid naming specific products, "
+                "and say that product availability/insurer details should be verified from official brochures before purchase."
+            )
         messages.append({"role": "user", "content": "\n\n".join(user_prompt_parts)})
 
 

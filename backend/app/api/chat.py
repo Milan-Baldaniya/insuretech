@@ -6,7 +6,7 @@ from app.schemas.chat import ChatRequest, ChatResponse, SourceCitation
 from app.core.config import get_settings
 from app.core.auth import get_current_user, get_current_user_id, is_admin_user
 from app.schemas.profile import UserProfilePayload
-from app.services.llm import generate_grounded_answer, stream_grounded_answer
+from app.services.llm import _postprocess_grounded_answer, generate_grounded_answer, stream_grounded_answer
 from app.services.retrieval import retrieve_context, confidence_for_chunks
 from app.services.memory import create_session, delete_session, get_all_sessions, get_recent_messages, get_session_history, save_message, session_belongs_to_user
 from app.services.profile import get_profile as fetch_profile
@@ -277,7 +277,10 @@ async def chat_stream(request: ChatRequest, user_id: str = Depends(get_current_u
                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
 
             # Save the complete answer
-            complete_text = "".join(full_answer)
+            raw_complete_text = "".join(full_answer)
+            complete_text = _postprocess_grounded_answer(raw_complete_text)
+            if complete_text != raw_complete_text:
+                yield f"data: {json.dumps({'type': 'replace', 'content': complete_text})}\n\n"
             assistant_message = save_message(session_id, user_id, "assistant", complete_text)
 
             # Build citations

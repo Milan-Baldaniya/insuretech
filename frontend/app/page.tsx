@@ -305,6 +305,14 @@ export default function ChatPage() {
                     : m
                 )
               );
+            } else if (event.type === "replace") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === botMsgId
+                    ? { ...m, content: event.content || m.content }
+                    : m
+                )
+              );
             } else if (event.type === "done") {
               // Apply metadata (sources, session, timestamp)
               if (!sessionId && event.session_id) setSessionId(event.session_id);
