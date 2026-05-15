@@ -93,9 +93,7 @@ export default function AdminDataManager({ apiBase, getAuthToken, onUnauthorized
 
   const visibleColumns = useMemo(() => {
     if (!activeTable) return [];
-    return activeTable.columns
-      .filter((column) => !SYSTEM_COLUMNS.includes(column))
-      .slice(0, 5);
+    return activeTable.columns.filter((column) => !SYSTEM_COLUMNS.includes(column));
   }, [activeTable]);
 
   const formTable = activeTable;
