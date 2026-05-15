@@ -93,11 +93,10 @@ export default function AdminDataManager({ apiBase, getAuthToken, onUnauthorized
 
   const visibleColumns = useMemo(() => {
     if (!activeTable) return [];
-    return [
-      ...activeTable.columns.slice(0, 5),
-      ...SYSTEM_COLUMNS.filter((column) => rows.some((row) => row[column] !== undefined)),
-    ].filter((column, index, all) => all.indexOf(column) === index);
-  }, [activeTable, rows]);
+    return activeTable.columns
+      .filter((column) => !SYSTEM_COLUMNS.includes(column))
+      .slice(0, 5);
+  }, [activeTable]);
 
   const formTable = activeTable;
   const formRow = editingRow;
