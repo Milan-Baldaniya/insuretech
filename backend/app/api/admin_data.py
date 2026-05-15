@@ -31,6 +31,7 @@ class TableConfig(BaseModel):
     json: list[str] = []
     search: list[str] = []
     order_by: str = "created_at"
+    foreign_keys: dict[str, dict[str, str]] = {}
 
 
 class RowPayload(BaseModel):
@@ -80,6 +81,7 @@ TABLES: dict[str, TableConfig] = {
         arrays=["source_page_refs"],
         numbers=["launch_year"],
         search=["product_name", "product_slug", "plan_code", "product_category", "product_type"],
+        foreign_keys={"company_id": {"table": "insurance_companies", "display": "company_name"}},
     ),
     "product_features": TableConfig(
         name="product_features",
@@ -91,6 +93,7 @@ TABLES: dict[str, TableConfig] = {
         textarea=["feature_description"],
         numbers=["display_order"],
         search=["feature_title", "feature_description", "feature_type"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_benefits": TableConfig(
         name="product_benefits",
@@ -101,6 +104,7 @@ TABLES: dict[str, TableConfig] = {
         required=["product_id", "benefit_type", "benefit_description"],
         textarea=["benefit_description"],
         search=["benefit_type", "benefit_description", "applies_to"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_conditions": TableConfig(
         name="product_conditions",
@@ -111,6 +115,7 @@ TABLES: dict[str, TableConfig] = {
         required=["product_id", "condition_type", "condition_description"],
         textarea=["condition_description"],
         search=["condition_type", "condition_title", "condition_description", "severity"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_riders_addons": TableConfig(
         name="product_riders_addons",
@@ -122,6 +127,7 @@ TABLES: dict[str, TableConfig] = {
         textarea=["description"],
         booleans=["is_optional"],
         search=["rider_name", "rider_type", "description"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_claim_performance": TableConfig(
         name="product_claim_performance",
@@ -132,6 +138,7 @@ TABLES: dict[str, TableConfig] = {
         required=["product_id", "metric_name", "metric_value"],
         textarea=["metric_context", "source_note"],
         search=["metric_name", "metric_value", "metric_year", "metric_context"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_ideal_customer_profiles": TableConfig(
         name="product_ideal_customer_profiles",
@@ -146,6 +153,7 @@ TABLES: dict[str, TableConfig] = {
         textarea=["profile_summary"],
         arrays=["customer_life_stage", "income_segment", "risk_profile", "recommended_for", "not_recommended_for"],
         search=["profile_summary"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_versions": TableConfig(
         name="product_versions",
@@ -163,6 +171,7 @@ TABLES: dict[str, TableConfig] = {
         numbers=["version_no"],
         dates=["effective_from", "effective_to"],
         search=["change_type", "change_summary", "approval_status", "source_reference"],
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "product_import_batches": TableConfig(
         name="product_import_batches",
@@ -194,6 +203,7 @@ TABLES: dict[str, TableConfig] = {
         textarea=["old_value", "new_value", "reason"],
         search=["action", "field_name", "old_value", "new_value", "reason"],
         order_by="performed_at",
+        foreign_keys={"product_id": {"table": "insurance_products", "display": "product_name"}},
     ),
     "law_sources": TableConfig(
         name="law_sources",
@@ -238,6 +248,7 @@ TABLES: dict[str, TableConfig] = {
         numbers=["year"],
         dates=["valid_from", "valid_to"],
         search=["instrument_name", "instrument_type", "regulator_or_authority", "purpose", "applicability"],
+        foreign_keys={"category_id": {"table": "legal_categories", "display": "category_name"}, "source_id": {"table": "law_sources", "display": "source_name"}},
     ),
     "legal_provisions": TableConfig(
         name="legal_provisions",
@@ -253,6 +264,7 @@ TABLES: dict[str, TableConfig] = {
         arrays=["applies_to"],
         booleans=["is_active"],
         search=["provision_code", "provision_title", "summary", "practical_meaning"],
+        foreign_keys={"instrument_id": {"table": "legal_instruments", "display": "instrument_name"}, "source_id": {"table": "law_sources", "display": "source_name"}},
     ),
     "regulatory_requirements": TableConfig(
         name="regulatory_requirements",
@@ -269,6 +281,7 @@ TABLES: dict[str, TableConfig] = {
         booleans=["is_mandatory", "is_active"],
         numbers=["deadline_days"],
         search=["requirement_name", "requirement_description", "applicable_entity", "requirement_value"],
+        foreign_keys={"provision_id": {"table": "legal_provisions", "display": "provision_title"}},
     ),
     "intermediary_types": TableConfig(
         name="intermediary_types",
@@ -300,6 +313,7 @@ TABLES: dict[str, TableConfig] = {
         arrays=["applicable_insurance_type"],
         booleans=["escalation_available", "is_active"],
         search=["right_name", "right_category", "description", "time_limit"],
+        foreign_keys={"related_provision_id": {"table": "legal_provisions", "display": "provision_title"}},
     ),
     "grievance_channels": TableConfig(
         name="grievance_channels",
@@ -324,6 +338,7 @@ TABLES: dict[str, TableConfig] = {
         textarea=["example_violation"],
         booleans=["is_active"],
         search=["violation_category", "example_violation", "responsible_party"],
+        foreign_keys={"related_provision_id": {"table": "legal_provisions", "display": "provision_title"}},
     ),
     "penalties": TableConfig(
         name="penalties",
@@ -336,6 +351,7 @@ TABLES: dict[str, TableConfig] = {
         booleans=["is_active"],
         numbers=["max_penalty_amount"],
         search=["penalty_title", "penalty_description", "consequence", "authority"],
+        foreign_keys={"violation_type_id": {"table": "violation_types", "display": "violation_category"}},
     ),
     "legal_change_log": TableConfig(
         name="legal_change_log",
@@ -393,6 +409,30 @@ async def list_managed_tables():
     for config in TABLES.values():
         grouped.setdefault(config.group, []).append(config.model_dump())
     return {"groups": grouped, "tables": [config.model_dump() for config in TABLES.values()]}
+
+
+@router.get("/lookup/{table}")
+async def lookup_options(table: str):
+    """Return id + display_column for FK dropdowns."""
+    config = TABLES.get(table)
+    if not config:
+        raise HTTPException(status_code=404, detail="Table not found.")
+    # Find the display column from any FK that references this table
+    display_col = None
+    for cfg in TABLES.values():
+        for fk_col, fk_info in cfg.foreign_keys.items():
+            if fk_info["table"] == table:
+                display_col = fk_info["display"]
+                break
+        if display_col:
+            break
+    if not display_col:
+        display_col = config.columns[0] if config.columns else "id"
+    try:
+        response = get_db().table(table).select(f"id,{display_col}").order(display_col).limit(500).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"options": response.data or [], "display_column": display_col}
 
 
 @router.get("/{table}")

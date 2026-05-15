@@ -18,6 +18,7 @@ type TableConfig = {
   dates: string[];
   json: string[];
   search: string[];
+  foreign_keys: Record<string, { table: string; display: string }>;
 };
 
 type AdminDataManagerProps = {
@@ -90,6 +91,7 @@ export default function AdminDataManager({ apiBase, getAuthToken, onUnauthorized
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [lookups, setLookups] = useState<Record<string, { id: string; label: string }[]>>({});
 
   const visibleColumns = useMemo(() => {
     if (!activeTable) return [];
@@ -177,6 +179,27 @@ export default function AdminDataManager({ apiBase, getAuthToken, onUnauthorized
     }, 0);
     return () => window.clearTimeout(timer);
   }, [activeTable, loadRows]);
+
+  // Fetch FK lookup data whenever active table changes
+  useEffect(() => {
+    if (!activeTable?.foreign_keys) return;
+    const fks = activeTable.foreign_keys;
+    if (!Object.keys(fks).length) return;
+    const fetchLookups = async () => {
+      const newLookups: Record<string, { id: string; label: string }[]> = {};
+      for (const [col, fkInfo] of Object.entries(fks)) {
+        try {
+          const data = await authedFetch(`${apiBase}/api/admin/data/lookup/${fkInfo.table}`);
+          newLookups[col] = (data.options || []).map((opt: Record<string, unknown>) => ({
+            id: String(opt.id),
+            label: String(opt[data.display_column] || opt.id),
+          }));
+        } catch { newLookups[col] = []; }
+      }
+      setLookups(newLookups);
+    };
+    fetchLookups();
+  }, [activeTable, apiBase, authedFetch]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -430,6 +453,13 @@ export default function AdminDataManager({ apiBase, getAuthToken, onUnauthorized
                             <option value="true">True</option>
                             <option value="false">False</option>
                           </select>
+                        ) : activeTable.foreign_keys?.[column] && lookups[column] ? (
+                          <select name={column} defaultValue={defaultValue} className="app-input" required={activeTable.required.includes(column)}>
+                            <option value="">— Select {humanize(column).replace(" Id", "")} —</option>
+                            {lookups[column].map((opt) => (
+                              <option key={opt.id} value={opt.id}>{opt.label}</option>
+                            ))}
+                          </select>
                         ) : activeTable.textarea.includes(column) || activeTable.json.includes(column) ? (
                           <textarea {...commonProps} rows={activeTable.json.includes(column) ? 7 : 4} />
                         ) : activeTable.dates.includes(column) ? (
@@ -483,11 +513,19 @@ export default function AdminDataManager({ apiBase, getAuthToken, onUnauthorized
                     ) : (
                       rows.map((row) => (
                         <tr key={String(row.id)} className="transition-colors hover:bg-slate-50/50 group">
-                          {visibleColumns.map((column) => (
+                          {visibleColumns.map((column) => {
+                            const raw = row[column];
+                            let cellText = displayValue(raw);
+                            if (activeTable.foreign_keys?.[column] && lookups[column]) {
+                              const match = lookups[column].find((opt) => opt.id === String(raw));
+                              if (match) cellText = match.label;
+                            }
+                            return (
                             <td key={column} className="max-w-[200px] sm:max-w-[300px] px-4 py-3.5 text-slate-600 truncate relative z-0">
-                              <span title={String(displayValue(row[column]))} className="truncate block">{displayValue(row[column])}</span>
+                              <span title={String(cellText)} className="truncate block">{cellText}</span>
                             </td>
-                          ))}
+                            );
+                          })}
                           <td className="px-4 py-3.5 text-right sticky right-0 z-10 bg-white group-hover:bg-slate-50 transition-colors shadow-[-4px_0_10px_rgba(0,0,0,0.02)]">
                             <div className="flex justify-end gap-2">
                               <button type="button" onClick={() => { setEditingRow(row); setIsCreating(false); }} className="secondary-button rounded-[14px] px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 shadow-sm bg-white hover:bg-slate-50" title="Edit">
