@@ -193,21 +193,86 @@ def _embed_document_chunks(db, doc_id: str) -> Dict[str, int | bool]:
     return {"success": True, "updated_chunks": updated, **counts}
 
 
-@router.get("", response_model=DocumentListResponse)
-async def list_documents():
-    """List all indexed documents directly from Supabase."""
-    docs = get_all_documents()
-    return DocumentListResponse(documents=docs, total=len(docs))
+from fastapi import BackgroundTasks
 
+def _process_document_task(
+    storage_path: Path,
+    document_id: str,
+    source_group: str,
+    domain: str,
+    original_filename: str,
+):
+    db = get_db()
+    try:
+        chunks, quality = ingest_pdf_pipeline(
+            file_path=str(storage_path),
+            document_id=document_id,
+            source_group=source_group,
+            source_metadata={
+                "file_name": storage_path.name,
+                "uploaded_via": "api",
+            },
+        )
+        quality_status = _quality_status(quality)
 
-@router.get("/status", response_model=DocumentStatusSummary)
-async def document_status():
-    """Return aggregated knowledge-base pipeline status."""
-    return get_document_status_summary()
+        if quality_status == "needs_ocr":
+            _refresh_document_counts(db, document_id, total_pages=quality["total_pages"])
+            _upsert_document_metadata(
+                db,
+                document_id,
+                quality,
+                {"warning": "extraction_quality_too_low"},
+                "needs_ocr",
+            )
+            return
+
+        if not chunks:
+            _refresh_document_counts(db, document_id, total_pages=quality["total_pages"])
+            _upsert_document_metadata(
+                db,
+                document_id,
+                quality,
+                {"warning": "no_chunks_generated"},
+                "failed_extraction",
+            )
+            return
+
+        save_chunks(document_id, chunks)
+        _refresh_document_counts(db, document_id, total_pages=quality["total_pages"])
+        
+        _upsert_document_metadata(
+            db,
+            document_id,
+            quality,
+            {"warning": "extraction_quality_low" if quality_status == "processed_with_warnings" else None},
+            quality_status,
+        )
+
+        embed_result = _embed_document_chunks(db, document_id)
+        final_status = "embedding_failed"
+        if embed_result.get("success"):
+            final_status = "processed_with_warnings" if quality_status == "processed_with_warnings" else "processed"
+
+        db.table("documents").update(
+            {
+                "status": final_status,
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", document_id).execute()
+
+    except Exception as exc:
+        db.table("documents").update(
+            {
+                "status": "failed_extraction",
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", document_id).execute()
+        print(f"Background processing failed for document {document_id}: {exc}")
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     source_group: str = Form("general"),
@@ -215,7 +280,7 @@ async def upload_document(
     version: Optional[int] = Form(None),
 ):
     """
-    Upload a PDF, ingest it, and embed its chunks synchronously.
+    Upload a PDF, save it, and queue background ingestion/embedding.
     """
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -269,105 +334,33 @@ async def upload_document(
             },
         )
 
-        chunks, quality = ingest_pdf_pipeline(
-            file_path=str(storage_path),
-            document_id=document_id,
-            source_group=source_group,
-            source_metadata={
-                "file_name": storage_path.name,
-                "uploaded_via": "api",
-            },
-        )
-        quality_status = _quality_status(quality)
-
-        if quality_status == "needs_ocr":
-            counts = _refresh_document_counts(db, document_id, total_pages=quality["total_pages"])
-            _upsert_document_metadata(
-                db,
-                document_id,
-                quality,
-                {"warning": "extraction_quality_too_low"},
-                "needs_ocr",
-            )
-            stored_doc = get_document_by_id(document_id)
-            if not stored_doc:
-                raise HTTPException(status_code=500, detail="Uploaded document was not saved correctly.")
-            return DocumentUploadResponse(
-                message="File uploaded, but extraction quality is too low. OCR is needed before normal retrieval.",
-                document_id=document_id,
-                title=stored_doc.title,
-                file_name=stored_doc.file_name,
-                source_group=stored_doc.source_group,
-                domain=domain,
-                status="needs_ocr",
-                total_pages=stored_doc.total_pages,
-                total_chunks=counts["total_chunks"],
-                embedded_chunks=counts["embedded_chunks"],
-                uploaded_at=stored_doc.uploaded_at,
-                processed_at=datetime.now(timezone.utc),
-                quality=quality,
-            )
-
-        if not chunks:
-            counts = _refresh_document_counts(db, document_id, total_pages=quality["total_pages"])
-            _upsert_document_metadata(
-                db,
-                document_id,
-                quality,
-                {"warning": "no_chunks_generated"},
-                "failed_extraction",
-            )
-            raise HTTPException(
-                status_code=422,
-                detail="The PDF was uploaded, but no searchable chunks could be generated from it.",
-            )
-
-        save_chunks(document_id, chunks)
-        counts = _refresh_document_counts(db, document_id, total_pages=quality["total_pages"])
-        _upsert_document_metadata(
-            db,
+        background_tasks.add_task(
+            _process_document_task,
+            storage_path,
             document_id,
-            quality,
-            {"warning": "extraction_quality_low" if quality_status == "processed_with_warnings" else None},
-            quality_status,
+            source_group,
+            domain,
+            file.filename,
         )
-
-        embed_result = _embed_document_chunks(db, document_id)
-        final_status = "embedding_failed"
-        if embed_result.get("success"):
-            final_status = "processed_with_warnings" if quality_status == "processed_with_warnings" else "processed"
-
-        db.table("documents").update(
-            {
-                "status": final_status,
-                "processed_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).eq("id", document_id).execute()
 
         stored_doc = get_document_by_id(document_id)
         if not stored_doc:
             raise HTTPException(status_code=500, detail="Uploaded document could not be reloaded from the registry.")
 
-        message = "File uploaded, indexed, and embedded successfully."
-        if final_status == "processed_with_warnings":
-            message = "File uploaded and indexed with extraction warnings."
-        elif final_status == "embedding_failed":
-            message = "File uploaded and indexed, but embeddings failed. Retry embedding for this document."
-
         return DocumentUploadResponse(
-            message=message,
+            message="File uploaded. Ingestion and embedding started in the background.",
             document_id=document_id,
             title=stored_doc.title,
             file_name=stored_doc.file_name,
             source_group=stored_doc.source_group,
             domain=domain,
-            status=final_status,
+            status="processing",
             total_pages=stored_doc.total_pages,
             total_chunks=stored_doc.total_chunks,
             embedded_chunks=stored_doc.embedded_chunks,
             uploaded_at=stored_doc.uploaded_at,
-            processed_at=stored_doc.processed_at,
-            quality=quality,
+            processed_at=None,
+            quality={},
         )
     except HTTPException:
         raise
