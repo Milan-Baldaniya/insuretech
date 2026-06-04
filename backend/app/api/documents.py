@@ -195,6 +195,19 @@ def _embed_document_chunks(db, doc_id: str) -> Dict[str, int | bool]:
 
 from fastapi import BackgroundTasks
 
+@router.get("", response_model=DocumentListResponse)
+async def list_documents():
+    """List all indexed documents directly from Supabase."""
+    docs = get_all_documents()
+    return DocumentListResponse(documents=docs, total=len(docs))
+
+
+@router.get("/status", response_model=DocumentStatusSummary)
+async def document_status():
+    """Return aggregated knowledge-base pipeline status."""
+    return get_document_status_summary()
+
+
 def _process_document_task(
     storage_path: Path,
     document_id: str,
