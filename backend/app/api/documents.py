@@ -91,9 +91,9 @@ def _determine_version(db, title: str, explicit_version: Optional[int]) -> int:
 
 
 def _quality_status(quality: Dict) -> str:
-    score = float(quality.get("extraction_quality_score", 0.0) or 0.0)
-    empty_ratio = float(quality.get("empty_page_ratio", 1.0) or 1.0)
-    pages_with_text = int(quality.get("pages_with_text", 0) or 0)
+    score = float(quality.get("extraction_quality_score", 0.0) if quality.get("extraction_quality_score") is not None else 0.0)
+    empty_ratio = float(quality.get("empty_page_ratio", 1.0) if quality.get("empty_page_ratio") is not None else 1.0)
+    pages_with_text = int(quality.get("pages_with_text", 0) if quality.get("pages_with_text") is not None else 0)
     if pages_with_text == 0 or empty_ratio >= 0.70 or score < 0.25:
         return "needs_ocr"
     if score < 0.55 or empty_ratio >= 0.35:
